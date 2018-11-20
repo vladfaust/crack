@@ -4,7 +4,7 @@ server = HTTP::Server.new do |context|
   context.response.print "Hello world!"
 end
 
-server.bind_tcp("localhost", 5000)
+server.bind_tcp("localhost", 5000, reuse_port: true)
 puts "\nListening"
 server.listen
 

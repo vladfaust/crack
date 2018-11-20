@@ -8,11 +8,6 @@ module Crack
     getter? closed = false
     getter? listening = false
 
-    # @times_reading = Deque(Time::Span).new
-    # @times_parsing_request = Deque(Time::Span).new
-    # @times_processing = Deque(Time::Span).new
-    # @times_writing = Deque(Time::Span).new
-
     def initialize(middleware)
       @middleware = middleware.map(&.as(Middleware))
     end
@@ -28,22 +23,10 @@ module Crack
       @sockets << socket
     end
 
-    def run
+    def listen
       raise "Can't restart a closed server" if closed?
       raise "Can't start a server with no sockets to listen to" if @sockets.empty?
       raise "Can't start an already running server" if listening?
-
-      Signal::INT.trap do
-        puts "\nClosing"
-
-        # puts "Avg reading request:  #{@times_reading.to_a.reduce(Time::Span.zero) { |t, s| s += t } / @times_reading.size}"
-        # puts "Avg parsing request:  #{@times_parsing_request.to_a.reduce(Time::Span.zero) { |t, s| s += t } / @times_parsing_request.size}"
-        # puts "Avg processing:       #{@times_processing.to_a.reduce(Time::Span.zero) { |t, s| s += t } / @times_processing.size}"
-        # puts "Avg writing response: #{@times_writing.to_a.reduce(Time::Span.zero) { |t, s| s += t } / @times_writing.size}"
-
-        close
-        exit
-      end
 
       @listening = true
       done = Channel(Nil).new
@@ -51,25 +34,19 @@ module Crack
       @sockets.each do |socket|
         spawn do
           until closed?
-            # now = Time.monotonic
-
             io = begin
               socket.accept?
             rescue e
-              e.inspect_with_backtrace STDERR
+              e.inspect_with_backtrace(STDERR)
               STDERR.flush
-
               nil
             end
 
-            # @times_reading << Time.monotonic - now
-
-            if _io = io
-              _io.as(IO::Buffered).sync = false
-              spawn handle_client(_io)
-            else
-              break
+            if io.is_a?(IO::Buffered)
+              io.sync = false
             end
+
+            spawn handle_client(io.not_nil!) if io
           end
         ensure
           done.send(nil)
@@ -94,35 +71,60 @@ module Crack
     end
 
     protected def handle_client(io : IO)
-      # now = Time.monotonic
+      close? = true
 
-      request = Request.new(io)
+      begin
+        loop do
+          request = Request.new(io)
+          break unless request # EOF
 
-      # @times_parsing_request << Time.monotonic - now
-      # now = Time.monotonic
+          response = Response.new(io, @middleware, request.version)
 
-      if request.is_a?(Request)
-        response = Response.new(request.version)
-        process(Context.new(request, response))
+          if request.is_a?(BadRequest)
+            response.write_default_response(400)
+            return
+          end
 
-        # @times_processing << Time.monotonic - now
-        # now = Time.monotonic
+          response.version = request.version
+          response.headers["Connection"] = "keep-alive" if request.keep_alive?
 
-        response.write(io)
+          begin
+            process(Context.new(request, response))
+          rescue ex
+            response.write_default_response(500)
 
-        # @times_writing << Time.monotonic - now
+            STDERR << "Unhandled exception on Crack::Server#process"
+            ex.inspect_with_backtrace(STDERR)
+
+            return
+          end
+
+          response.write
+          io.flush
+
+          if response.upgraded?
+            close? = false
+            return
+          end
+
+          break unless request.keep_alive?
+        end
+      rescue ex : Errno
+      ensure
+        begin
+          io.close if close?
+        rescue ex : Errno
+        end
       end
-    ensure
-      io.close
     end
 
     protected def process(context : Context)
-      process(context, @middleware)
+      process(context, context.response.middleware)
     end
 
     protected def process(context, middleware, index = 0)
       middleware[index].call(context) do
-        process(context, middleware, index + 1) if middleware[index + 1]?
+        process(context, context.response.middleware, index + 1) if context.response.middleware[index + 1]?
       end
     end
   end

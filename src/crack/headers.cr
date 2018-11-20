@@ -1,5 +1,5 @@
 module Crack
-  # From https://greenbytes.de/tech/webdav/rfc2616.html#rfc.section.4.2:
+  # From https://greenbytes.de/tech/webdav/rfc2616.html#rfc.section.4.2
   #
   # "Multiple message-header fields with the same field-name may be present in a message if and only if the entire field-value for that header field is defined as a comma-separated list..."
   #
@@ -21,7 +21,7 @@ module Crack
         raise InvalidCharError.new unless valid_char?(char)
       end
 
-      @hash[key.downcase] = value
+      @hash[key] = value
     end
 
     forward_missing_to @hash

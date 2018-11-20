@@ -15,22 +15,18 @@ module Crack
     def initialize(@method, @resource, @version, @headers, @body)
     end
 
-    def self.new(io : IO)
-      # now = Time.monotonic
+    def keep_alive?
+      HTTP.keep_alive?(self)
+    end
 
+    def self.new(io : IO)
       request_line? = io.gets(4096, chomp: true)
-      return empty_request_error unless request_line?
+      return unless request_line?
       request_line = request_line?.not_nil!
 
-      # puts "request_line    took #{Time.monotonic - now}"
-      # now = Time.monotonic
-
       parts = request_line.split
-      return bad_request_error unless parts.size == 3
-      return bad_request_error unless SUPPORTED_HTTP_VERSIONS.includes?(parts[2])
-
-      # puts "reading parts   took #{Time.monotonic - now}"
-      # now = Time.monotonic
+      return BadRequest.new unless parts.size == 3
+      return BadRequest.new unless SUPPORTED_HTTP_VERSIONS.includes?(parts[2])
 
       method, resource, version = parts
       headers = Headers.new
@@ -76,18 +72,7 @@ module Crack
         headers[name] = value
       end
 
-      # puts "headers + body  took #{Time.monotonic - now}"
-
       return new(method, resource, version, headers, body)
-    end
-
-    protected class_getter bad_request_error = BadRequestError.new
-    protected class_getter empty_request_error = EmptyRequestError.new
-
-    class BadRequestError < Exception
-    end
-
-    class EmptyRequestError < Exception
     end
   end
 end

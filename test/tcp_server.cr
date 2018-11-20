@@ -1,14 +1,53 @@
 require "socket"
+require "http/request"
+require "http/server"
 
-def handle_client(client)
-  # message = client.gets
-  message = client.gets(1)
-  client.print("HTTP/1.0 200 Success\r\n\r\nHello World!\n")
-  client.close
+def handle_client(io)
+  must_close = true
+  response = HTTP::Server::Response.new(io)
+
+  begin
+    loop do
+      if io.is_a?(IO::Buffered)
+        io.sync = false
+      end
+
+      request = HTTP::Request.from_io(io)
+      break unless request
+
+      if request.is_a?(HTTP::Request::BadRequest)
+        response.respond_with_error("Bad Request", 400)
+        response.close
+        return
+      end
+
+      response.version = request.version
+      response.reset
+
+      response.output.print("Hello World!\n")
+      response.output.close
+      io.flush
+
+      request.body.try &.close
+    rescue ex : Errno
+      # IO-related error, nothing to do
+    ensure
+      begin
+        io.close if must_close
+      rescue ex : Errno
+        # IO-related error, nothing to do
+      end
+    end
+  end
 end
 
-server = TCPServer.new("localhost", 5000)
+server = TCPServer.new("localhost", 5000, reuse_port: true)
 puts "\nListening"
-while client = server.accept?
-  spawn handle_client(client)
+loop do
+  io = server.accept?
+
+  if io
+    _io = io
+    spawn handle_client(_io)
+  end
 end
